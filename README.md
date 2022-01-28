@@ -1,6 +1,8 @@
 ## AWS Autoscaling exporter
 
-Prometheus exporter for AWS auto scaling groups, part of the [Hollowtrees](https://github.com/banzaicloud/hollowtrees) project. Provides auto scaling group level metrics similar to CloudWatch metrics and instance level metrics for spot instances in the auto scaling group. For group level metrics the exporter is polling the AWS APIs for auto scaling groups. For instance level metrics it queries the Banzai Cloud spot instance [recommender API](https://github.com/banzaicloud/spot-recommender) to report cost and stability related metrics for spot instances.
+Project evolved from https://github.com/banzaicloud/aws-autoscaling-exporter
+
+Prometheus exporter for AWS auto scaling groups. Provides auto scaling group level metrics similar to CloudWatch metrics and instance level metrics for spot instances in the auto scaling group. For group level metrics the exporter is polling the AWS APIs for auto scaling groups.
 
 ### Quick start
 
@@ -13,17 +15,19 @@ The following options can be configured when starting the exporter:
 
 ```
 ./aws-autoscaling-exporter --help
-Usage of ./aws-autoscaling-exporter:
+Usage of /var/folders/2c/_zc5v_yj0755l_g_z0b6c0n80000gq/T/go-build967886099/b001/exe/aws-autoscaling-exporter:
+  -auto-scaling-groups string
+      Comma separated list of auto scaling groups to monitor. Empty value means all groups in the region.
   -listen-address string
-        The address to listen on for HTTP requests. (default ":8089")
+      The address to listen on for HTTP requests. (default ":8089")
   -log-level string
-        log level (default "info")
+      log level (default "info")
   -metrics-path string
-        path to metrics endpoint (default "/metrics")
-  -recommender-url string
-        URL of the spot instance recommender (default "http://localhost:9090")
-  -region string
-        AWS region that the exporter should query (default "eu-west-1")
+      path to metrics endpoint (default "/metrics")
+  -region value
+      AWS region that the exporter should query
+  -regions string
+      Comma separated list of regions
 ```
 
 ### Metrics
@@ -75,8 +79,3 @@ aws_instance_spot_bid_price{asg_name="marci-test",availability_zone="eu-west-1a"
 # TYPE aws_instance_stability_score gauge
 aws_instance_stability_score{asg_name="marci-test",availability_zone="eu-west-1a",instance_id="i-061ae0a2960e194be",instance_type="m5.xlarge",region="eu-west-1"} 0
 ```
-
-### Default Hollowtrees node exporters associated to alerts:
-
-* AWS spot instance termination [collector](https://github.com/banzaicloud/spot-termination-collector)
-* AWS autoscaling group [exporter](https://github.com/banzaicloud/aws-autoscaling-exporter)
