@@ -1,7 +1,5 @@
 github.com/aws/aws-sdk-go v1.12.65 h1:Zz7YhvKhWuUx2gUkU19lIAJs4Bdyt1n/Kdtkdt7XZDs=
 github.com/aws/aws-sdk-go v1.12.65/go.mod h1:ZRmQr0FajVIyZ4ZzBYKG5P3ZqPz9IHG41ZoMu1ADI3k=
-github.com/banzaicloud/aws-autoscaling-exporter v0.0.0-20180214135037-65d3fc00fd74 h1:BuUaAy6/OpCGM8blGGN6uAj6p9r2xqu+JkSTFI6XhoA=
-github.com/banzaicloud/aws-autoscaling-exporter v0.0.0-20180214135037-65d3fc00fd74/go.mod h1:zGmRPSzRh1/XxjlV2AN2R5sWHpb+DpaO5rftqb6d8sQ=
 github.com/beorn7/perks v0.0.0-20160804104726-4c0e84591b9a h1:BtpsbiV638WQZwhA98cEZw2BsbnQJrbd0BI7tsy0W1c=
 github.com/beorn7/perks v0.0.0-20160804104726-4c0e84591b9a/go.mod h1:Dwedo/Wpr24TaqPxmxbtue+5NUziq4I4S80YR8gNf3Q=
 github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8=

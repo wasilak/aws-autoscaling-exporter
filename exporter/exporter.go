@@ -1,10 +1,7 @@
 package exporter
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"net/http"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -20,9 +17,8 @@ import (
 
 // Exporter implements the prometheus.Exporter interface, and exports AWS AutoScaling metrics.
 type Exporter struct {
-	session         *session.Session
+	sessions        []*session.Session
 	groups          []string
-	recommenderUrl  string
 	duration        prometheus.Gauge
 	scrapeErrors    prometheus.Gauge
 	totalScrapes    prometheus.Counter
@@ -70,20 +66,25 @@ func (e *instanceScrapeError) Error() string {
 }
 
 // NewExporter returns a new exporter of AWS Autoscaling group metrics.
-func NewExporter(region string, groups []string, recommenderUrl string) (*Exporter, error) {
+func NewExporter(regions []string, groups []string) (*Exporter, error) {
 
-	session, err := session.NewSession(&aws.Config{
-		Region: aws.String(region),
-	})
-	if err != nil {
-		log.WithError(err).Error("Error creating AWS session")
-		return nil, err
+	var sessions []*session.Session
+
+	for _, region := range regions {
+
+		sess, err := session.NewSession(&aws.Config{
+			Region: aws.String(region),
+		})
+		if err != nil {
+			log.WithError(err).Error("Error creating AWS session")
+			return nil, err
+		}
+		sessions = append(sessions, sess)
 	}
 
 	e := Exporter{
-		session:        session,
-		groups:         groups,
-		recommenderUrl: recommenderUrl,
+		sessions: sessions,
+		groups:   groups,
 		duration: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: "aws_autoscaling",
 			Name:      "scrape_duration_seconds",
@@ -100,8 +101,8 @@ func NewExporter(region string, groups []string, recommenderUrl string) (*Export
 			Help:      "The scrape error status.",
 		}),
 	}
-
 	e.initGauges()
+
 	return &e, nil
 }
 
@@ -230,55 +231,42 @@ func (e *Exporter) scrape(groupScrapes chan<- GroupScrapeResult, instanceScrapes
 
 	var errorCount uint64 = 0
 
-	asgSvc := autoscaling.New(e.session, aws.NewConfig())
-	err := asgSvc.DescribeAutoScalingGroupsPages(&autoscaling.DescribeAutoScalingGroupsInput{
-		AutoScalingGroupNames: aws.StringSlice(e.groups),
-	}, func(result *autoscaling.DescribeAutoScalingGroupsOutput, lastPage bool) bool {
-		log.Debugf("Number of AutoScaling Groups found: %d [lastPage = %t]", len(result.AutoScalingGroups), lastPage)
-		var wg sync.WaitGroup
-		for _, asg := range result.AutoScalingGroups {
-			log.Debug("scraping: ", *asg.AutoScalingGroupName)
-			wg.Add(1)
-			go func(asg *autoscaling.Group) {
-				defer wg.Done()
-				var recommendation *Recommendation
-				describeLcOutput, err := asgSvc.DescribeLaunchConfigurations(&autoscaling.DescribeLaunchConfigurationsInput{
-					LaunchConfigurationNames: []*string{asg.LaunchConfigurationName},
-				})
-				if err != nil {
-					log.WithField("autoScalingGroup", *asg.AutoScalingGroupName).WithError(err).Error("Failed to fetch launch configuration for auto scaling group, recommendation related metrics will not be reported.")
-					atomic.AddUint64(&errorCount, 1)
-				} else if len(describeLcOutput.LaunchConfigurations) != 1 {
-					log.WithField("autoScalingGroup", *asg.AutoScalingGroupName).Error("Failed to fetch launch configuration for auto scaling group, recommendation related metrics will not be reported.")
-					atomic.AddUint64(&errorCount, 1)
-				} else {
-					recommendation, err = e.getRecommendations(*describeLcOutput.LaunchConfigurations[0].InstanceType)
-					if err != nil {
-						log.WithField("autoScalingGroup", *asg.AutoScalingGroupName).WithError(err).Error("Failed to get recommendations, recommendation related metrics will not be reported.")
-						atomic.AddUint64(&errorCount, 1)
-					}
-				}
-				if err := e.scrapeAsg(groupScrapes, instanceScrapes, asg, recommendation); err != nil {
-					log.WithField("autoScalingGroup", *asg.AutoScalingGroupName).Error(err)
-					if e, ok := err.(*instanceScrapeError); ok {
-						atomic.AddUint64(&errorCount, e.count)
-					} else {
-						atomic.AddUint64(&errorCount, 1)
-					}
+	for _, sess := range e.sessions {
+		asgSvc := autoscaling.New(sess, aws.NewConfig())
+		err := asgSvc.DescribeAutoScalingGroupsPages(&autoscaling.DescribeAutoScalingGroupsInput{
+			AutoScalingGroupNames: aws.StringSlice(e.groups),
+		}, func(result *autoscaling.DescribeAutoScalingGroupsOutput, lastPage bool) bool {
+			log.Debugf("Number of AutoScaling Groups found: %d [lastPage = %t]", len(result.AutoScalingGroups), lastPage)
+			var wg sync.WaitGroup
+			for _, asg := range result.AutoScalingGroups {
+				log.Debug("scraping: ", *asg.AutoScalingGroupName)
+				wg.Add(1)
+				go func(asg *autoscaling.Group) {
+					defer wg.Done()
 
-				}
-			}(asg)
+					if err := e.scrapeAsg(sess, groupScrapes, instanceScrapes, asg); err != nil {
+						log.WithField("autoScalingGroup", *asg.AutoScalingGroupName).Error(err)
+						if e, ok := err.(*instanceScrapeError); ok {
+							atomic.AddUint64(&errorCount, e.count)
+						} else {
+							atomic.AddUint64(&errorCount, 1)
+						}
+
+					}
+				}(asg)
+			}
+			wg.Wait()
+			return true
+		})
+		if err != nil {
+			log.WithError(err).Error("An error happened while fetching AutoScaling Groups")
+			atomic.AddUint64(&errorCount, 1)
 		}
-		wg.Wait()
-		return true
-	})
-	if err != nil {
-		log.WithError(err).Error("An error happened while fetching AutoScaling Groups")
-		atomic.AddUint64(&errorCount, 1)
+
+		e.scrapeErrors.Set(float64(atomic.LoadUint64(&errorCount)))
+		e.duration.Set(float64(time.Now().UnixNano()-now) / 1000000000)
 	}
 
-	e.scrapeErrors.Set(float64(atomic.LoadUint64(&errorCount)))
-	e.duration.Set(float64(time.Now().UnixNano()-now) / 1000000000)
 }
 
 func (e *Exporter) setGroupMetrics(scrapes <-chan GroupScrapeResult) {
@@ -321,30 +309,7 @@ func (e *Exporter) setInstanceMetrics(scrapes <-chan InstanceScrapeResult) {
 	}
 }
 
-func (e *Exporter) getRecommendations(instanceType string) (*Recommendation, error) {
-	if instanceType == "" {
-		return nil, errors.New("no instance type specified for recommendation")
-	}
-	fullRecommendationUrl := fmt.Sprintf("%s/api/v1/recommender/%s?baseInstanceType=%s", e.recommenderUrl, *e.session.Config.Region, instanceType)
-	res, err := http.Get(fullRecommendationUrl)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-
-	var recommendation *Recommendation
-	if res.StatusCode != http.StatusOK {
-		return nil, errors.New(fmt.Sprintf("Couldn't get recommendations: GET '%s': response code = '%s', expecting '200 OK'", fullRecommendationUrl, res.Status))
-	}
-	recommendation = new(Recommendation)
-	err = json.NewDecoder(res.Body).Decode(recommendation)
-	if err != nil {
-		return nil, err
-	}
-	return recommendation, nil
-}
-
-func (e *Exporter) scrapeAsg(groupScrapes chan<- GroupScrapeResult, instanceScrapes chan<- InstanceScrapeResult, asg *autoscaling.Group, recommendation *Recommendation) error {
+func (e *Exporter) scrapeAsg(sess *session.Session, groupScrapes chan<- GroupScrapeResult, instanceScrapes chan<- InstanceScrapeResult, asg *autoscaling.Group) error {
 	log.WithField("autoScalingGroup", *asg.AutoScalingGroupName).Debug("getting metrics from the auto scaling group")
 
 	var pendingInstances, inServiceInstances, standbyInstances, terminatingInstances, spotInstances int
@@ -370,38 +335,38 @@ func (e *Exporter) scrapeAsg(groupScrapes chan<- GroupScrapeResult, instanceScra
 		Name:             "instances_total",
 		Value:            float64(len(asg.Instances)),
 		AutoScalingGroup: *asg.AutoScalingGroupName,
-		Region:           *e.session.Config.Region,
+		Region:           *sess.Config.Region,
 	}
 	groupScrapes <- GroupScrapeResult{
 		Name:             "pending_instances_total",
 		Value:            float64(pendingInstances),
 		AutoScalingGroup: *asg.AutoScalingGroupName,
-		Region:           *e.session.Config.Region,
+		Region:           *sess.Config.Region,
 	}
 	groupScrapes <- GroupScrapeResult{
 		Name:             "inservice_instances_total",
 		Value:            float64(inServiceInstances),
 		AutoScalingGroup: *asg.AutoScalingGroupName,
-		Region:           *e.session.Config.Region,
+		Region:           *sess.Config.Region,
 	}
 	groupScrapes <- GroupScrapeResult{
 		Name:             "terminating_instances_total",
 		Value:            float64(terminatingInstances),
 		AutoScalingGroup: *asg.AutoScalingGroupName,
-		Region:           *e.session.Config.Region,
+		Region:           *sess.Config.Region,
 	}
 	groupScrapes <- GroupScrapeResult{
 		Name:             "standby_instances_total",
 		Value:            float64(standbyInstances),
 		AutoScalingGroup: *asg.AutoScalingGroupName,
-		Region:           *e.session.Config.Region,
+		Region:           *sess.Config.Region,
 	}
 
 	var countError *instanceScrapeError
 	if len(instanceIds) > 0 {
 		var err error
 		log.WithField("autoScalingGroup", *asg.AutoScalingGroupName).Debug("getting metrics from the instances in the autoscaling group")
-		spotInstances, err = e.scrapeInstances(instanceScrapes, *asg.AutoScalingGroupName, instanceIds, recommendation)
+		spotInstances, err = e.scrapeInstances(sess, instanceScrapes, *asg.AutoScalingGroupName, instanceIds)
 		if err != nil {
 			if e, ok := err.(*instanceScrapeError); ok {
 				countError = e
@@ -415,7 +380,7 @@ func (e *Exporter) scrapeAsg(groupScrapes chan<- GroupScrapeResult, instanceScra
 		Name:             "spot_instances_total",
 		Value:            float64(spotInstances),
 		AutoScalingGroup: *asg.AutoScalingGroupName,
-		Region:           *e.session.Config.Region,
+		Region:           *sess.Config.Region,
 	}
 
 	if countError != nil {
@@ -424,9 +389,9 @@ func (e *Exporter) scrapeAsg(groupScrapes chan<- GroupScrapeResult, instanceScra
 	return nil
 }
 
-func (e *Exporter) scrapeInstances(scrapes chan<- InstanceScrapeResult, asgName string, instanceIds []*string, recommendation *Recommendation) (int, error) {
+func (e *Exporter) scrapeInstances(sess *session.Session, scrapes chan<- InstanceScrapeResult, asgName string, instanceIds []*string) (int, error) {
 	var errorCount uint64
-	ec2Svc := ec2.New(e.session, aws.NewConfig())
+	ec2Svc := ec2.New(sess, aws.NewConfig())
 	var spotRequests []*string
 
 	err := ec2Svc.DescribeInstancesPages(&ec2.DescribeInstancesInput{
@@ -463,93 +428,10 @@ func (e *Exporter) scrapeInstances(scrapes chan<- InstanceScrapeResult, asgName 
 					Name:             "spot_bid_price",
 					Value:            spotBidPrice,
 					AutoScalingGroup: asgName,
-					Region:           *e.session.Config.Region,
+					Region:           *sess.Config.Region,
 					InstanceId:       *spotRequest.InstanceId,
 					AvailabilityZone: *spotRequest.LaunchedAvailabilityZone,
 					InstanceType:     *spotRequest.LaunchSpecification.InstanceType,
-				}
-			}
-
-			if recommendation != nil {
-				for _, instanceTypeRecommendation := range (*recommendation)[*spotRequest.LaunchedAvailabilityZone] {
-					if instanceTypeRecommendation.InstanceTypeName == *spotRequest.LaunchSpecification.InstanceType {
-						costScore, err := strconv.ParseFloat(instanceTypeRecommendation.CostScore, 64)
-						if err != nil {
-							log.WithField("autoScalingGroup", asgName).Error(err)
-							errorCount++
-						} else {
-							scrapes <- InstanceScrapeResult{
-								Name:             "cost_score",
-								Value:            costScore,
-								AutoScalingGroup: asgName,
-								Region:           *e.session.Config.Region,
-								InstanceId:       *spotRequest.InstanceId,
-								AvailabilityZone: *spotRequest.LaunchedAvailabilityZone,
-								InstanceType:     *spotRequest.LaunchSpecification.InstanceType,
-							}
-						}
-						stabilityScore, err := strconv.ParseFloat(instanceTypeRecommendation.StabilityScore, 64)
-						if err != nil {
-							log.WithField("autoScalingGroup", asgName).Error(err)
-							errorCount++
-						} else {
-							scrapes <- InstanceScrapeResult{
-								Name:             "stability_score",
-								Value:            stabilityScore,
-								AutoScalingGroup: asgName,
-								Region:           *e.session.Config.Region,
-								InstanceId:       *spotRequest.InstanceId,
-								AvailabilityZone: *spotRequest.LaunchedAvailabilityZone,
-								InstanceType:     *spotRequest.LaunchSpecification.InstanceType,
-							}
-						}
-						currentPrice, err := strconv.ParseFloat(instanceTypeRecommendation.CurrentPrice, 64)
-						if err != nil {
-							log.WithField("autoScalingGroup", asgName).Error(err)
-							errorCount++
-						} else {
-							scrapes <- InstanceScrapeResult{
-								Name:             "current_price",
-								Value:            currentPrice,
-								AutoScalingGroup: asgName,
-								Region:           *e.session.Config.Region,
-								InstanceId:       *spotRequest.InstanceId,
-								AvailabilityZone: *spotRequest.LaunchedAvailabilityZone,
-								InstanceType:     *spotRequest.LaunchSpecification.InstanceType,
-							}
-						}
-						onDemandPrice, err := strconv.ParseFloat(instanceTypeRecommendation.OnDemandPrice, 64)
-						if err != nil {
-							log.WithField("autoScalingGroup", asgName).Error(err)
-							errorCount++
-						} else {
-							scrapes <- InstanceScrapeResult{
-								Name:             "on_demand_price",
-								Value:            onDemandPrice,
-								AutoScalingGroup: asgName,
-								Region:           *e.session.Config.Region,
-								InstanceId:       *spotRequest.InstanceId,
-								AvailabilityZone: *spotRequest.LaunchedAvailabilityZone,
-								InstanceType:     *spotRequest.LaunchSpecification.InstanceType,
-							}
-						}
-						optimalBidPrice, err := strconv.ParseFloat(instanceTypeRecommendation.SuggestedBidPrice, 64)
-						if err != nil {
-							log.WithField("autoScalingGroup", asgName).Error(err)
-							errorCount++
-						} else {
-							scrapes <- InstanceScrapeResult{
-								Name:             "optimal_bid_price",
-								Value:            optimalBidPrice,
-								AutoScalingGroup: asgName,
-								Region:           *e.session.Config.Region,
-								InstanceId:       *spotRequest.InstanceId,
-								AvailabilityZone: *spotRequest.LaunchedAvailabilityZone,
-								InstanceType:     *spotRequest.LaunchSpecification.InstanceType,
-							}
-						}
-						break
-					}
 				}
 			}
 		}

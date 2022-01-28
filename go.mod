@@ -4,7 +4,6 @@ go 1.17
 
 require (
 	github.com/aws/aws-sdk-go v1.12.65
-	github.com/banzaicloud/aws-autoscaling-exporter v0.0.0-20180214135037-65d3fc00fd74
 	github.com/prometheus/client_golang v0.8.0
 	github.com/sirupsen/logrus v1.0.4
 )

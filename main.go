@@ -2,25 +2,46 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"net/http"
 
-	"github.com/banzaicloud/aws-autoscaling-exporter/exporter"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	log "github.com/sirupsen/logrus"
+	"github.com/wasilak/aws-autoscaling-exporter/exporter"
 	"strings"
 )
 
+type regionSlice []string
+
+type Value interface {
+	String() string
+	Set(string) error
+}
+
+func (i *regionSlice) String() string {
+	return fmt.Sprintf("%d", *i)
+}
+
+func (i *regionSlice) Set(value string) error {
+	fmt.Printf("%s\n", value)
+	*i = append(*i, value)
+	return nil
+}
+
 var (
-	addr           = flag.String("listen-address", ":8089", "The address to listen on for HTTP requests.")
-	metricsPath    = flag.String("metrics-path", "/metrics", "path to metrics endpoint")
-	rawLevel       = flag.String("log-level", "info", "log level")
-	region         = flag.String("region", "eu-west-1", "AWS region that the exporter should query")
-	groupsFlag     = flag.String("auto-scaling-groups", "", "Comma separated list of auto scaling groups to monitor. Empty value means all groups in the region.")
-	recommenderUrl = flag.String("recommender-url", "http://localhost:9090", "URL of the spot instance recommender")
+	addr        = flag.String("listen-address", ":8089", "The address to listen on for HTTP requests.")
+	metricsPath = flag.String("metrics-path", "/metrics", "path to metrics endpoint")
+	rawLevel    = flag.String("log-level", "info", "log level")
+	regionsFlag = flag.String("regions", "", "Comma separated list of regions")
+	groupsFlag  = flag.String("auto-scaling-groups", "", "Comma separated list of auto scaling groups to monitor. Empty value means all groups in the region.")
 )
 
 func init() {
+	var regions regionSlice
+
+	flag.Var(&regions, "region", "AWS region that the exporter should query")
+
 	flag.Parse()
 	parsedLevel, err := log.ParseLevel(*rawLevel)
 	if err != nil {
@@ -39,7 +60,13 @@ func main() {
 	if *groupsFlag != "" {
 		groups = strings.Split(strings.Replace(*groupsFlag, " ", "", -1), ",")
 	}
-	exporter, err := exporter.NewExporter(*region, groups, *recommenderUrl)
+
+	var regions []string
+	if *regionsFlag != "" {
+		regions = strings.Split(strings.Replace(*regionsFlag, " ", "", -1), ",")
+	}
+
+	exporter, err := exporter.NewExporter(regions, groups)
 	if err != nil {
 		log.Fatal(err)
 	}
