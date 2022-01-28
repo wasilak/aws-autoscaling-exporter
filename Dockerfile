@@ -1,11 +1,11 @@
 # build stage
-FROM golang:1.9.3-alpine3.7
+FROM quay.io/wasilak/golang:1.17-alpine as builder
 
-ADD . /go/src/github.com/banzaicloud/aws-autoscaling-exporter
-WORKDIR /go/src/github.com/banzaicloud/aws-autoscaling-exporter
-RUN go build -o /bin/aws-autoscaling-exporter .
+ADD . /app
+WORKDIR /app
+RUN go build -o /aws-autoscaling-exporter
 
-FROM alpine:latest
-RUN apk update && apk add ca-certificates && rm -rf /var/cache/apk/*
-COPY --from=0 /bin/aws-autoscaling-exporter /bin
-ENTRYPOINT ["/bin/aws-autoscaling-exporter"]
+FROM quay.io/wasilak/alpine:3
+
+COPY --from=builder /aws-autoscaling-exporter /aws-autoscaling-exporter
+ENTRYPOINT ["/aws-autoscaling-exporter"]
