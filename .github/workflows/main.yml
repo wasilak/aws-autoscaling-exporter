@@ -38,7 +38,7 @@ jobs:
       - name: Build executable
         run: |
           mkdir -p ./dist
-          go build -o ../dist/aws-autoscaling-exporter
+          go build -o ./dist/aws-autoscaling-exporter
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
