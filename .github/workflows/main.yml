@@ -37,8 +37,7 @@ jobs:
 
       - name: Build executable
         run: |
-          cd src/
-          mkdir -p ../dist
+          mkdir -p ./dist
           go build -o ../dist/aws-autoscaling-exporter
         env:
           GOOS: ${{ matrix.os }}
@@ -46,11 +45,9 @@ jobs:
 
       - name: compress executable
         run: |
-          # apt update && apt install zip -y
           cd dist
           chmod +x aws-autoscaling-exporter
           zip aws-autoscaling-exporter-${{ matrix.os }}-${{ matrix.arch }}.zip aws-autoscaling-exporter
-          ls -lha .
 
       - name: Release
         uses: softprops/action-gh-release@v1
