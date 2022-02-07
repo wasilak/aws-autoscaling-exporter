@@ -19,6 +19,7 @@ import (
 type Exporter struct {
 	sessions        []*session.Session
 	groups          []string
+	metricsName     string
 	duration        prometheus.Gauge
 	scrapeErrors    prometheus.Gauge
 	totalScrapes    prometheus.Counter
@@ -33,6 +34,7 @@ type GroupScrapeResult struct {
 	Value            float64
 	AutoScalingGroup string
 	Region           string
+	Prefix           string
 }
 
 type InstanceScrapeResult struct {
@@ -43,6 +45,7 @@ type InstanceScrapeResult struct {
 	InstanceId       string
 	AvailabilityZone string
 	InstanceType     string
+	Prefix           string
 }
 
 type Recommendation map[string][]InstanceTypeRecommendation
@@ -66,7 +69,7 @@ func (e *instanceScrapeError) Error() string {
 }
 
 // NewExporter returns a new exporter of AWS Autoscaling group metrics.
-func NewExporter(regions []string, groups []string) (*Exporter, error) {
+func NewExporter(regions []string, groups []string, metricsName string) (*Exporter, error) {
 
 	var sessions []*session.Session
 
@@ -83,8 +86,9 @@ func NewExporter(regions []string, groups []string) (*Exporter, error) {
 	}
 
 	e := Exporter{
-		sessions: sessions,
-		groups:   groups,
+		sessions:    sessions,
+		metricsName: metricsName,
+		groups:      groups,
 		duration: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: "aws_autoscaling",
 			Name:      "scrape_duration_seconds",
@@ -113,64 +117,64 @@ func (e *Exporter) initGauges() {
 		Namespace: "aws_autoscaling",
 		Name:      "pending_instances_total",
 		Help:      "Total number of pending instances in the auto scaling group",
-	}, []string{"asg_name", "region"})
+	}, []string{"asg_name", "region", "prefix"})
 	e.groupMetrics["inservice_instances_total"] = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "aws_autoscaling",
 		Name:      "inservice_instances_total",
 		Help:      "Total number of in service instances in the auto scaling group",
-	}, []string{"asg_name", "region"})
+	}, []string{"asg_name", "region", "prefix"})
 	e.groupMetrics["standby_instances_total"] = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "aws_autoscaling",
 		Name:      "standby_instances_total",
 		Help:      "Total number of standby instances in the auto scaling group",
-	}, []string{"asg_name", "region"})
+	}, []string{"asg_name", "region", "prefix"})
 	e.groupMetrics["terminating_instances_total"] = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "aws_autoscaling",
 		Name:      "terminating_instances_total",
 		Help:      "Total number of terminating instances in the auto scaling group",
-	}, []string{"asg_name", "region"})
+	}, []string{"asg_name", "region", "prefix"})
 	e.groupMetrics["spot_instances_total"] = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "aws_autoscaling",
 		Name:      "spot_instances_total",
 		Help:      "Total number of spot instances in the auto scaling group",
-	}, []string{"asg_name", "region"})
+	}, []string{"asg_name", "region", "prefix"})
 	e.groupMetrics["instances_total"] = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "aws_autoscaling",
 		Name:      "instances_total",
 		Help:      "Total number of instances in the auto scaling group",
-	}, []string{"asg_name", "region"})
+	}, []string{"asg_name", "region", "prefix"})
 
 	e.instanceMetrics = map[string]*prometheus.GaugeVec{}
 	e.instanceMetrics["spot_bid_price"] = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "aws_instance",
 		Name:      "spot_bid_price",
 		Help:      "Spot bid price used to request the spot instance",
-	}, []string{"asg_name", "region", "instance_id", "instance_type", "availability_zone"})
+	}, []string{"asg_name", "region", "instance_id", "instance_type", "availability_zone", "prefix"})
 	e.instanceMetrics["cost_score"] = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "aws_instance",
 		Name:      "cost_score",
 		Help:      "Current cost score of spot instance reported by the spot recommender",
-	}, []string{"asg_name", "region", "instance_id", "instance_type", "availability_zone"})
+	}, []string{"asg_name", "region", "instance_id", "instance_type", "availability_zone", "prefix"})
 	e.instanceMetrics["stability_score"] = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "aws_instance",
 		Name:      "stability_score",
 		Help:      "Current stability score of spot instance reported by the spot recommender",
-	}, []string{"asg_name", "region", "instance_id", "instance_type", "availability_zone"})
+	}, []string{"asg_name", "region", "instance_id", "instance_type", "availability_zone", "prefix"})
 	e.instanceMetrics["on_demand_price"] = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "aws_instance",
 		Name:      "on_demand_price",
 		Help:      "Current on demand price of spot instance reported by the spot recommender",
-	}, []string{"asg_name", "region", "instance_id", "instance_type", "availability_zone"})
+	}, []string{"asg_name", "region", "instance_id", "instance_type", "availability_zone", "prefix"})
 	e.instanceMetrics["optimal_bid_price"] = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "aws_instance",
 		Name:      "optimal_bid_price",
 		Help:      "Optimal spot bid price of instance reported by the spot recommender",
-	}, []string{"asg_name", "region", "instance_id", "instance_type", "availability_zone"})
+	}, []string{"asg_name", "region", "instance_id", "instance_type", "availability_zone", "prefix"})
 	e.instanceMetrics["current_price"] = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "aws_instance",
 		Name:      "current_price",
 		Help:      "Current price of spot instance reported by the spot recommender.",
-	}, []string{"asg_name", "region", "instance_id", "instance_type", "availability_zone"})
+	}, []string{"asg_name", "region", "instance_id", "instance_type", "availability_zone", "prefix"})
 }
 
 // Describe outputs metric descriptions.
@@ -278,10 +282,10 @@ func (e *Exporter) setGroupMetrics(scrapes <-chan GroupScrapeResult) {
 			e.groupMetrics[name] = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 				Namespace: "aws_autoscaling",
 				Name:      name,
-			}, []string{"asg_name", "region"})
+			}, []string{"asg_name", "region", "prefix"})
 			e.metricsMtx.Unlock()
 		}
-		var labels prometheus.Labels = map[string]string{"asg_name": scr.AutoScalingGroup, "region": scr.Region}
+		var labels prometheus.Labels = map[string]string{"asg_name": scr.AutoScalingGroup, "region": scr.Region, "prefix": e.metricsName}
 		e.groupMetrics[name].With(labels).Set(float64(scr.Value))
 	}
 }
@@ -295,7 +299,7 @@ func (e *Exporter) setInstanceMetrics(scrapes <-chan InstanceScrapeResult) {
 			e.instanceMetrics[name] = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 				Namespace: "aws_instance",
 				Name:      name,
-			}, []string{"asg_name", "region", "instance_id", "instance_type", "availability_zone"})
+			}, []string{"asg_name", "region", "instance_id", "instance_type", "availability_zone", "prefix"})
 			e.metricsMtx.Unlock()
 		}
 		var labels prometheus.Labels = map[string]string{
@@ -304,6 +308,7 @@ func (e *Exporter) setInstanceMetrics(scrapes <-chan InstanceScrapeResult) {
 			"instance_id":       scr.InstanceId,
 			"instance_type":     scr.InstanceType,
 			"availability_zone": scr.AvailabilityZone,
+			"prefix":            e.metricsName,
 		}
 		e.instanceMetrics[name].With(labels).Set(float64(scr.Value))
 	}
@@ -336,30 +341,35 @@ func (e *Exporter) scrapeAsg(sess *session.Session, groupScrapes chan<- GroupScr
 		Value:            float64(len(asg.Instances)),
 		AutoScalingGroup: *asg.AutoScalingGroupName,
 		Region:           *sess.Config.Region,
+		Prefix:           e.metricsName,
 	}
 	groupScrapes <- GroupScrapeResult{
 		Name:             "pending_instances_total",
 		Value:            float64(pendingInstances),
 		AutoScalingGroup: *asg.AutoScalingGroupName,
 		Region:           *sess.Config.Region,
+		Prefix:           e.metricsName,
 	}
 	groupScrapes <- GroupScrapeResult{
 		Name:             "inservice_instances_total",
 		Value:            float64(inServiceInstances),
 		AutoScalingGroup: *asg.AutoScalingGroupName,
 		Region:           *sess.Config.Region,
+		Prefix:           e.metricsName,
 	}
 	groupScrapes <- GroupScrapeResult{
 		Name:             "terminating_instances_total",
 		Value:            float64(terminatingInstances),
 		AutoScalingGroup: *asg.AutoScalingGroupName,
 		Region:           *sess.Config.Region,
+		Prefix:           e.metricsName,
 	}
 	groupScrapes <- GroupScrapeResult{
 		Name:             "standby_instances_total",
 		Value:            float64(standbyInstances),
 		AutoScalingGroup: *asg.AutoScalingGroupName,
 		Region:           *sess.Config.Region,
+		Prefix:           e.metricsName,
 	}
 
 	var countError *instanceScrapeError
@@ -381,6 +391,7 @@ func (e *Exporter) scrapeAsg(sess *session.Session, groupScrapes chan<- GroupScr
 		Value:            float64(spotInstances),
 		AutoScalingGroup: *asg.AutoScalingGroupName,
 		Region:           *sess.Config.Region,
+		Prefix:           e.metricsName,
 	}
 
 	if countError != nil {
@@ -429,6 +440,7 @@ func (e *Exporter) scrapeInstances(sess *session.Session, scrapes chan<- Instanc
 					Value:            spotBidPrice,
 					AutoScalingGroup: asgName,
 					Region:           *sess.Config.Region,
+					Prefix:           e.metricsName,
 					InstanceId:       *spotRequest.InstanceId,
 					AvailabilityZone: *spotRequest.LaunchedAvailabilityZone,
 					InstanceType:     *spotRequest.LaunchSpecification.InstanceType,

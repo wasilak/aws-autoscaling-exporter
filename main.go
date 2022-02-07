@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -19,29 +18,16 @@ type Value interface {
 	Set(string) error
 }
 
-func (i *regionSlice) String() string {
-	return fmt.Sprintf("%d", *i)
-}
-
-func (i *regionSlice) Set(value string) error {
-	fmt.Printf("%s\n", value)
-	*i = append(*i, value)
-	return nil
-}
-
 var (
-	addr        = flag.String("listen-address", ":8089", "The address to listen on for HTTP requests.")
-	metricsPath = flag.String("metrics-path", "/metrics", "path to metrics endpoint")
-	rawLevel    = flag.String("log-level", "info", "log level")
-	regionsFlag = flag.String("regions", "", "Comma separated list of regions")
-	groupsFlag  = flag.String("auto-scaling-groups", "", "Comma separated list of auto scaling groups to monitor. Empty value means all groups in the region.")
+	addr          = flag.String("listen-address", ":8089", "The address to listen on for HTTP requests.")
+	metricsPath   = flag.String("metrics-path", "/metrics", "path to metrics endpoint")
+	metricsPrefix = flag.String("metrics-prefix", "default", "name for distinguishing mtrics")
+	rawLevel      = flag.String("log-level", "info", "log level")
+	regionsFlag   = flag.String("regions", "", "Comma separated list of regions")
+	groupsFlag    = flag.String("auto-scaling-groups", "", "Comma separated list of auto scaling groups to monitor. Empty value means all groups in the region.")
 )
 
 func init() {
-	var regions regionSlice
-
-	flag.Var(&regions, "region", "AWS region that the exporter should query")
-
 	flag.Parse()
 	parsedLevel, err := log.ParseLevel(*rawLevel)
 	if err != nil {
@@ -66,7 +52,7 @@ func main() {
 		regions = strings.Split(strings.Replace(*regionsFlag, " ", "", -1), ",")
 	}
 
-	exporter, err := exporter.NewExporter(regions, groups)
+	exporter, err := exporter.NewExporter(regions, groups, *metricsPrefix)
 	if err != nil {
 		log.Fatal(err)
 	}
